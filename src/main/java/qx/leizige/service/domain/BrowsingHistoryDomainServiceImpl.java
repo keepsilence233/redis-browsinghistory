@@ -1,17 +1,23 @@
 package qx.leizige.service.domain;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import com.alibaba.fastjson.JSON;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 import lombok.extern.slf4j.Slf4j;
 import qx.leizige.common.HistoryRedisUtils;
 import qx.leizige.common.dto.Pager;
 import qx.leizige.common.dto.SpuResDto;
 
+import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -59,11 +65,41 @@ public class BrowsingHistoryDomainServiceImpl implements BrowsingHistoryDomainSe
 		Set<String> valueSet = historyRedisUtils.reverseRangeByScore(key, currentPage, pageSize);
 		log.info("redis reverseRangeByScore valueSet : {},size: {}", JSON.toJSONString(valueSet), valueSet.size());
 
+		Set<String> codeSet = Sets.newHashSet();
+		List<BrowsingHistoryEntityList> browsingHistoryEntityList = new ArrayList<>();
 		valueSet.forEach(value -> {
 			//根据value不同值的拼接符split,拿到唯一编码去获取不同的值
 			String[] valueArray = StringUtils.split(value, "-");
+			codeSet.add(valueArray[0]);
+			browsingHistoryEntityList.add(new BrowsingHistoryEntityList(valueArray[0],valueArray[1]));
 		});
-		return new Pager<>();
+
+		List<SpuResDto> spuResDtoList = Lists.newArrayList();	//	模拟根据codeSet获取到的商品集合
+		Map<String, SpuResDto> oldSpuMap = spuResDtoList.stream().collect(Collectors.toMap(SpuResDto::getSpuCode, Function.identity(), (o1, o2) -> o2));
+		List<SpuResDto> newSpuResDtoList = Lists.newLinkedList();
+		browsingHistoryEntityList.forEach(entity -> {
+
+			String spuCode = entity.getCode();
+			SpuResDto oldSpuResDto = oldSpuMap.get(spuCode);
+
+			List<String> newSpuCodeList = newSpuResDtoList.stream().map(SpuResDto::getSpuCode).collect(Collectors.toList());
+
+			if (oldSpuResDto != null && !newSpuCodeList.contains(spuCode)) {
+				oldSpuResDto.setBrowsingHistoryDate(entity.getBrowsingHistoryDate());
+				newSpuResDtoList.add(oldSpuResDto);
+			}
+
+			//例:2021/06/08浏览了A商品,2021/06/09也浏览了A商品,所以copy一份相同的商品出来,只是浏览日期不同
+			if (oldSpuResDto != null && newSpuCodeList.contains(spuCode)) {
+				SpuResDto spuResDto = new SpuResDto();
+				BeanUtils.copyProperties(oldSpuResDto, spuResDto);
+				spuResDto.setBrowsingHistoryDate(entity.getBrowsingHistoryDate());
+				newSpuResDtoList.add(spuResDto);
+			}
+		});
+
+
+		return new Pager(newSpuResDtoList);
 	}
 
 	@Override
